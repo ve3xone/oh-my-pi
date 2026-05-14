@@ -15,7 +15,7 @@ from omp_rpc import HostToolContext, RpcCommandError
 from robomp.db import Database
 from robomp.github_client import GitHubClient, IssueInfo, RepoInfo
 from robomp.host_tools import ToolBindings, build
-from robomp.sandbox import Workspace
+from robomp.sandbox import LocalGitTransport, Workspace
 
 
 def _stub_workspace(tmp_path: Path) -> Workspace:
@@ -81,6 +81,7 @@ def _bindings(
     bindings = ToolBindings(
         db=db,
         github=github,
+        git_transport=LocalGitTransport(token=None),
         repo=_stub_repo(),
         issue=_stub_issue(),
         workspace=_stub_workspace(tmp_path),
@@ -151,6 +152,7 @@ def test_gh_post_comment_defaults_to_inbound_pr_thread(db: Database, tmp_path: P
     bindings = ToolBindings(
         db=db,
         github=github,
+        git_transport=LocalGitTransport(token=None),
         repo=_stub_repo(),
         issue=_stub_issue(),  # issue #42
         workspace=_stub_workspace(tmp_path),
@@ -182,6 +184,7 @@ def test_gh_post_comment_explicit_number_overrides_inbound(db: Database, tmp_pat
     bindings = ToolBindings(
         db=db,
         github=github,
+        git_transport=LocalGitTransport(token=None),
         repo=_stub_repo(),
         issue=_stub_issue(),
         workspace=_stub_workspace(tmp_path),
@@ -493,6 +496,7 @@ def test_gh_push_branch_rejects_wrong_identity(db: Database, tmp_path: Path) -> 
         bindings = ToolBindings(
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             repo=_stub_repo(),
             issue=IssueInfo(
                 repo="octo/widget",
@@ -610,6 +614,7 @@ def test_gh_open_pr_rejects_wrong_identity_before_push_or_pr(db: Database, tmp_p
         bindings = ToolBindings(
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             repo=_stub_repo(),
             issue=IssueInfo(
                 repo="octo/widget",
@@ -729,6 +734,7 @@ def test_gh_push_branch_rejects_invalid_identity_scan_range(db: Database, tmp_pa
         bindings = ToolBindings(
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             repo=_stub_repo(),
             issue=IssueInfo(
                 repo="octo/widget",
@@ -836,9 +842,9 @@ def test_gh_open_pr_refuses_failed_bun_check_before_push_or_pr(
         _stop_loop(loop, t)
 
     msg = str(exc.value)
-    assert "`bun check` failed before PR creation" in msg
+    assert "refusing to open PR" in msg
+    assert "`bun check` failed before open PR" in msg
     assert "TypeError: property missing" in msg
-    assert "retry `gh_open_pr`" in msg
     assert not opened_pr
     row = db._conn.execute("SELECT error FROM tool_calls WHERE tool='gh_open_pr' ORDER BY id DESC LIMIT 1").fetchone()
     assert row is not None
@@ -924,6 +930,7 @@ def test_gh_push_branch_rejects_dirty_worktree(db: Database, tmp_path: Path) -> 
         bindings = ToolBindings(
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             repo=_stub_repo(),
             issue=IssueInfo(
                 repo="octo/widget",
@@ -964,10 +971,12 @@ def test_gh_push_branch_rejects_dirty_worktree(db: Database, tmp_path: Path) -> 
         _stop_loop(loop, thread)
 
 
-def test_gh_push_branch_does_not_run_repository_bun_scripts(
+def test_gh_push_branch_runs_fix_and_check_before_pushing(
     db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A clean push must not execute repository-controlled package scripts during preflight."""
+    """gh_push_branch must run `bun run fix` then `bun check` (when defined)
+    before the push reaches the remote. Same gate as `gh_open_pr` so a
+    follow-up commit can't break CI."""
     import os
     import subprocess
 
@@ -1009,36 +1018,41 @@ def test_gh_push_branch_does_not_run_repository_bun_scripts(
     ws = mgr.ensure_workspace(
         repo="octo/widget",
         number=42,
-        title="no repo scripts during push",
+        title="push gate",
         clone_url=str(bare),
         default_branch="main",
         author_name="robomp-bot",
         author_email="robomp-bot@example.invalid",
     )
 
-    marker = tmp_path / "bun-invoked"
+    fix_calls = tmp_path / "fix-calls"
+    check_calls = tmp_path / "check-calls"
     fakebin = tmp_path / "fakebin"
     fakebin.mkdir()
     fake_bun = fakebin / "bun"
-    fake_bun.write_text(f"#!/bin/sh\nprintf invoked > {marker}\nprintf dirty > formatter-output.txt\nexit 0\n")
+    fake_bun.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "run" ] && [ "$2" = "fix" ]; then\n'
+        f"    printf called >> {fix_calls}\n"
+        '    printf "formatted\\n" > src.txt\n'
+        "    exit 0\n"
+        "fi\n"
+        'if [ "$1" = "check" ]; then\n'
+        f"    printf called >> {check_calls}\n"
+        "    exit 0\n"
+        "fi\n"
+        'printf "unexpected bun call: %s\\n" "$*" >&2\n'
+        "exit 2\n"
+    )
     fake_bun.chmod(0o755)
     monkeypatch.setenv("PATH", f"{fakebin}{os.pathsep}{os.environ['PATH']}")
 
     (ws.repo_dir / "package.json").write_text(
-        json.dumps(
-            {
-                "scripts": {
-                    "fix:tools": "printf dirty > formatter-output.txt",
-                    "fix": "printf dirty > formatter-output.txt",
-                },
-            }
-        )
-        + "\n"
+        json.dumps({"scripts": {"fix": "...", "check": "..."}}) + "\n",
+        encoding="utf-8",
     )
-    (ws.repo_dir / "feature.txt").write_text("feature\n")
-    subprocess.run(
-        ["git", "-C", str(ws.repo_dir), "add", "package.json", "feature.txt"], check=True, capture_output=True
-    )
+    (ws.repo_dir / "src.txt").write_text("original\n")
+    subprocess.run(["git", "-C", str(ws.repo_dir), "add", "package.json", "src.txt"], check=True, capture_output=True)
     subprocess.run(
         [
             "git",
@@ -1050,7 +1064,7 @@ def test_gh_push_branch_does_not_run_repository_bun_scripts(
             "user.name=robomp-bot",
             "commit",
             "-m",
-            "ok",
+            "feat: follow-up",
         ],
         check=True,
         capture_output=True,
@@ -1063,6 +1077,7 @@ def test_gh_push_branch_does_not_run_repository_bun_scripts(
         bindings = ToolBindings(
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             repo=_stub_repo(),
             issue=IssueInfo(
                 repo="octo/widget",
@@ -1092,9 +1107,20 @@ def test_gh_push_branch_does_not_run_repository_bun_scripts(
     finally:
         _stop_loop(loop, thread)
 
+    # Both gates ran, and fix preceded check (both have one call recorded).
+    assert fix_calls.read_text() == "called"
+    assert check_calls.read_text() == "called"
+    # The formatter's diff was committed by the bot as a `style: bun run fix` commit.
+    log = subprocess.run(
+        ["git", "-C", str(ws.repo_dir), "log", "--format=%an <%ae> %s", "-n", "2"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    lines = log.stdout.strip().splitlines()
+    assert lines[0].startswith("robomp-bot <robomp-bot@example.invalid> style: bun run fix"), lines
+    # And the branch ended up on the remote at the new head.
     assert result.startswith(f"pushed {ws.branch} ")
-    assert not marker.exists()
-    assert not (ws.repo_dir / "formatter-output.txt").exists()
     refs = subprocess.run(
         ["git", "-C", str(bare), "for-each-ref", "--format=%(refname)"],
         capture_output=True,
@@ -1102,6 +1128,315 @@ def test_gh_push_branch_does_not_run_repository_bun_scripts(
         check=True,
     )
     assert f"refs/heads/{ws.branch}" in refs.stdout.splitlines()
+
+
+def test_gh_push_branch_force_with_lease_recovers_after_amend(db: Database, tmp_path: Path) -> None:
+    """A divergent local history (amended commit) must push successfully.
+
+    Plain `git push` rejects this as non-fast-forward, leaving the agent stuck.
+    `--force-with-lease` accepts the rewrite because origin still matches the
+    ref we last fetched."""
+    import os
+    import subprocess
+
+    bare = tmp_path / "upstream.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare", "--initial-branch=main", str(bare)], check=True, capture_output=True)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    env = os.environ | {
+        "GIT_AUTHOR_NAME": "robomp-bot",
+        "GIT_AUTHOR_EMAIL": "robomp-bot@example.invalid",
+        "GIT_COMMITTER_NAME": "robomp-bot",
+        "GIT_COMMITTER_EMAIL": "robomp-bot@example.invalid",
+    }
+    subprocess.run(["git", "init", "--initial-branch=main", str(seed)], check=True, capture_output=True)
+    (seed / "README.md").write_text("init\n")
+    for cmd in (
+        ["git", "-C", str(seed), "add", "."],
+        [
+            "git",
+            "-C",
+            str(seed),
+            "-c",
+            "user.email=robomp-bot@example.invalid",
+            "-c",
+            "user.name=robomp-bot",
+            "commit",
+            "-m",
+            "init",
+        ],
+        ["git", "-C", str(seed), "remote", "add", "origin", str(bare)],
+        ["git", "-C", str(seed), "push", "origin", "main"],
+    ):
+        subprocess.run(cmd, check=True, capture_output=True, env=env)
+
+    from robomp.sandbox import SandboxManager
+
+    mgr = SandboxManager(tmp_path / "workspaces")
+    ws = mgr.ensure_workspace(
+        repo="octo/widget",
+        number=42,
+        title="amend recover",
+        clone_url=str(bare),
+        default_branch="main",
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
+    )
+    # First commit + push — fast-forward path.
+    (ws.repo_dir / "feature.txt").write_text("original\n")
+    subprocess.run(["git", "-C", str(ws.repo_dir), "add", "feature.txt"], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(ws.repo_dir),
+            "-c",
+            "user.email=robomp-bot@example.invalid",
+            "-c",
+            "user.name=robomp-bot",
+            "commit",
+            "-m",
+            "feat: original",
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+    github = GitHubClient("tok", transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    loop, thread = _make_loop_in_background()
+    try:
+        bindings = ToolBindings(
+            db=db,
+            github=github,
+            git_transport=LocalGitTransport(token=None),
+            repo=_stub_repo(),
+            issue=IssueInfo(
+                repo="octo/widget",
+                number=42,
+                title="t",
+                body="",
+                state="open",
+                author="alice",
+                labels=(),
+                is_pull_request=False,
+            ),
+            workspace=ws,
+            loop=loop,
+            author_name="robomp-bot",
+            author_email="robomp-bot@example.invalid",
+        )
+        db.upsert_issue(
+            key=bindings.issue_key,
+            repo="octo/widget",
+            number=42,
+            state="reproducing",
+            branch=ws.branch,
+            session_dir=str(ws.session_dir),
+        )
+        tool = next(x for x in build(bindings) if x.name == "gh_push_branch")
+        tool.execute({}, _ctx())
+
+        # Confirm origin received the original commit.
+        first_remote = subprocess.run(
+            ["git", "-C", str(bare), "rev-parse", f"refs/heads/{ws.branch}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+        # Now amend the commit (simulates an agent reset-author rebase, or a
+        # code change applied via `git commit --amend`).
+        (ws.repo_dir / "feature.txt").write_text("amended\n")
+        subprocess.run(["git", "-C", str(ws.repo_dir), "add", "feature.txt"], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ws.repo_dir),
+                "-c",
+                "user.email=robomp-bot@example.invalid",
+                "-c",
+                "user.name=robomp-bot",
+                "commit",
+                "--amend",
+                "--no-edit",
+            ],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        new_local = subprocess.run(
+            ["git", "-C", str(ws.repo_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert new_local != first_remote, "amend must rewrite the SHA"
+
+        # Second push — divergent. Plain `git push` would reject; we expect success.
+        result = tool.execute({}, _ctx())
+    finally:
+        _stop_loop(loop, thread)
+
+    assert result.startswith(f"pushed {ws.branch} ")
+    final_remote = subprocess.run(
+        ["git", "-C", str(bare), "rev-parse", f"refs/heads/{ws.branch}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert final_remote == new_local, (final_remote, new_local)
+
+
+def test_gh_push_branch_aborts_on_failed_bun_check(
+    db: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing `bun check` aborts the push and leaves the remote untouched."""
+    import os
+    import subprocess
+
+    bare = tmp_path / "upstream.git"
+    bare.mkdir()
+    subprocess.run(["git", "init", "--bare", "--initial-branch=main", str(bare)], check=True, capture_output=True)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    env = os.environ | {
+        "GIT_AUTHOR_NAME": "robomp-bot",
+        "GIT_AUTHOR_EMAIL": "robomp-bot@example.invalid",
+        "GIT_COMMITTER_NAME": "robomp-bot",
+        "GIT_COMMITTER_EMAIL": "robomp-bot@example.invalid",
+    }
+    subprocess.run(["git", "init", "--initial-branch=main", str(seed)], check=True, capture_output=True)
+    (seed / "README.md").write_text("init\n")
+    for cmd in (
+        ["git", "-C", str(seed), "add", "."],
+        [
+            "git",
+            "-C",
+            str(seed),
+            "-c",
+            "user.email=robomp-bot@example.invalid",
+            "-c",
+            "user.name=robomp-bot",
+            "commit",
+            "-m",
+            "init",
+        ],
+        ["git", "-C", str(seed), "remote", "add", "origin", str(bare)],
+        ["git", "-C", str(seed), "push", "origin", "main"],
+    ):
+        subprocess.run(cmd, check=True, capture_output=True, env=env)
+
+    from robomp.sandbox import SandboxManager
+
+    mgr = SandboxManager(tmp_path / "workspaces")
+    ws = mgr.ensure_workspace(
+        repo="octo/widget",
+        number=42,
+        title="push aborted",
+        clone_url=str(bare),
+        default_branch="main",
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
+    )
+
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    fake_bun = fakebin / "bun"
+    fake_bun.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "check" ]; then\n'
+        '    printf "TypeError: property missing\\n" >&2\n'
+        "    exit 1\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    fake_bun.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fakebin}{os.pathsep}{os.environ['PATH']}")
+
+    (ws.repo_dir / "package.json").write_text(
+        json.dumps({"scripts": {"check": "tsc --noEmit"}}) + "\n",
+        encoding="utf-8",
+    )
+    (ws.repo_dir / "feature.txt").write_text("feature\n")
+    subprocess.run(
+        ["git", "-C", str(ws.repo_dir), "add", "package.json", "feature.txt"], check=True, capture_output=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(ws.repo_dir),
+            "-c",
+            "user.email=robomp-bot@example.invalid",
+            "-c",
+            "user.name=robomp-bot",
+            "commit",
+            "-m",
+            "ok",
+        ],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+    github = GitHubClient("tok", transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    loop, thread = _make_loop_in_background()
+    try:
+        bindings = ToolBindings(
+            db=db,
+            github=github,
+            git_transport=LocalGitTransport(token=None),
+            repo=_stub_repo(),
+            issue=IssueInfo(
+                repo="octo/widget",
+                number=42,
+                title="t",
+                body="",
+                state="open",
+                author="alice",
+                labels=(),
+                is_pull_request=False,
+            ),
+            workspace=ws,
+            loop=loop,
+            author_name="robomp-bot",
+            author_email="robomp-bot@example.invalid",
+        )
+        db.upsert_issue(
+            key=bindings.issue_key,
+            repo="octo/widget",
+            number=42,
+            state="reproducing",
+            branch=ws.branch,
+            session_dir=str(ws.session_dir),
+        )
+        tool = next(x for x in build(bindings) if x.name == "gh_push_branch")
+        with pytest.raises(RpcCommandError) as exc:
+            tool.execute({}, _ctx())
+    finally:
+        _stop_loop(loop, thread)
+
+    msg = str(exc.value)
+    assert "refusing to push" in msg
+    assert "`bun check` failed before push" in msg
+    assert "TypeError: property missing" in msg
+    # The branch must not have reached the remote.
+    refs = subprocess.run(
+        ["git", "-C", str(bare), "for-each-ref", "--format=%(refname)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert not any(r.startswith("refs/heads/farm/") for r in refs.stdout.splitlines()), refs.stdout
+    # Audit row attributes the failure to gh_push_branch, not gh_open_pr.
+    row = db._conn.execute(
+        "SELECT tool, error FROM tool_calls WHERE tool='gh_push_branch' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    assert "TypeError: property missing" in row["error"]
 
 
 def test_gh_open_pr_runs_fix_then_check_and_commits_fixup(
@@ -1227,6 +1562,7 @@ def test_gh_open_pr_runs_fix_then_check_and_commits_fixup(
         bindings = ToolBindings(
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             repo=_stub_repo(),
             issue=IssueInfo(
                 repo="octo/widget",
@@ -1401,6 +1737,7 @@ def test_gh_open_pr_skips_fix_when_no_script(db: Database, tmp_path: Path, monke
         bindings = ToolBindings(
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             repo=_stub_repo(),
             issue=IssueInfo(
                 repo="octo/widget",

@@ -68,12 +68,14 @@ def test_triage_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     from robomp.config import Settings, reset_settings_cache
     from robomp.db import Database
     from robomp.github_client import GitHubClient
-    from robomp.sandbox import SandboxManager
+    from robomp.sandbox import LocalGitTransport, SandboxManager
     from robomp.tasks import triage_issue
 
     bare = _seed_failing_repo(tmp_path)
 
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+    monkeypatch.setenv("ROBOMP_GH_PROXY_URL", "http://gh-proxy.invalid:8081")
+    monkeypatch.setenv("ROBOMP_GH_PROXY_HMAC_KEY", "test-hmac-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", "secret")
     monkeypatch.setenv("ROBOMP_BOT_LOGIN", "robomp-bot")
     monkeypatch.setenv("ROBOMP_REPO_ALLOWLIST", "octo/widget")
@@ -171,6 +173,7 @@ def test_triage_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
             settings=cfg,
             db=db,
             github=github,
+            git_transport=LocalGitTransport(token=None),
             sandbox=sandbox,
             payload=payload,
             delivery_id="smoke-test",

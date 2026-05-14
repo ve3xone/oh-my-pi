@@ -115,3 +115,18 @@ def test_kickoff_directive_prompt_embeds_thread_and_classify_instruction() -> No
     assert "reproduce + fix" in out
     # The kickoff variant must still tell the agent to classify first.
     assert "Classify first" in out
+
+
+def test_resume_triage_renders_branch_and_issue() -> None:
+    out = persona.resume_triage(
+        repo=_Repo(),
+        issue=_Issue(),
+        workspace=_Workspace(),
+    )
+    # Working branch surfaces literally so the agent sees what it's on.
+    assert "farm/abc/test" in out
+    # Issue identity surfaces with the title.
+    assert "octo/widget#1080" in out
+    assert "broken thing" in out
+    # The prompt instructs the agent to reconcile drift via fetch_issue_thread.
+    assert "fetch_issue_thread" in out

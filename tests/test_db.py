@@ -90,10 +90,23 @@ def test_reset_stuck_running_recovers(db: Database) -> None:
     )
     row = db.claim_next_event()
     assert row is not None
+    # Capture `started_at` set by the claim so we can prove the recovery flip preserves it.
+    with db._lock:  # noqa: SLF001
+        before = db._conn.execute(  # noqa: SLF001
+            "SELECT started_at FROM events WHERE delivery_id=?", ("d1",)
+        ).fetchone()
+    assert before is not None
+    assert before["started_at"] is not None
     # Simulate crash: row still running.
     recovered = db.reset_stuck_running()
     assert recovered == 1
     assert db.get_event("d1").state == "queued"
+    with db._lock:  # noqa: SLF001
+        after = db._conn.execute(  # noqa: SLF001
+            "SELECT started_at FROM events WHERE delivery_id=?", ("d1",)
+        ).fetchone()
+    assert after is not None
+    assert after["started_at"] == before["started_at"]
 
 
 def test_upsert_issue_round_trip(db: Database) -> None:

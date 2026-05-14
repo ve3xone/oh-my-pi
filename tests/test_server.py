@@ -16,6 +16,7 @@ from robomp.dashboard import tail_jsonl
 from robomp.db import close_database, get_database, issue_key
 from robomp.github_client import GitHubClient
 from robomp.manual_triage import InvalidIssueRef, parse_issue_ref
+from robomp.sandbox import LocalGitTransport
 from robomp.server import create_app
 
 
@@ -1300,6 +1301,7 @@ async def test_handle_comment_directive_bootstraps_untriaged_issue(
         settings=settings,
         db=db,
         github=GitHubClient("t"),
+        git_transport=LocalGitTransport(token=None),
         sandbox=sandbox,
         payload=payload,
         delivery_id="test-delivery-1",
@@ -1369,6 +1371,7 @@ async def test_handle_comment_directive_reopens_finalized_issue(
         settings=settings,
         db=db,
         github=GitHubClient("t"),
+        git_transport=LocalGitTransport(token=None),
         sandbox=sandbox,
         payload=payload,
         delivery_id="test-delivery-2",
@@ -1442,6 +1445,7 @@ async def test_handle_comment_finalized_without_directive_still_replies(
         settings=settings,
         db=db,
         github=GitHubClient("t"),
+        git_transport=LocalGitTransport(token=None),
         sandbox=sandbox,
         payload=payload,
         delivery_id="test-delivery-3",
@@ -1519,6 +1523,7 @@ async def test_directive_handler_attaches_thread_from_github(
         settings=settings,
         db=db,
         github=GitHubClient("t"),
+        git_transport=LocalGitTransport(token=None),
         sandbox=sandbox,
         payload=payload,
         delivery_id="test-delivery-4",

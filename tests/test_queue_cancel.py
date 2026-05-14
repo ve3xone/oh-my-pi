@@ -31,12 +31,17 @@ class _StubSandbox:
     """Sentinel; queue tests don't touch the workspace pool."""
 
 
+class _StubGitTransport:
+    """Sentinel; queue tests don't push."""
+
+
 def _make_pool(settings: Settings, db: Database) -> WorkerPool:
     return WorkerPool(
         settings=settings,
         db=db,
         github=_StubGitHub(),  # type: ignore[arg-type]
         sandbox=_StubSandbox(),  # type: ignore[arg-type]
+        git_transport=_StubGitTransport(),  # type: ignore[arg-type]
     )
 
 
@@ -174,6 +179,36 @@ async def test_non_cancelled_failure_keeps_real_traceback(
     assert stored.last_error is not None
     assert "boom 42" in stored.last_error
     assert "cancelled by operator" not in stored.last_error
+
+
+@pytest.mark.asyncio
+async def test_run_event_marks_failed_when_not_shutting_down(
+    settings: Settings, db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When `_shutting_down` is False, a dispatch failure still marks the row failed."""
+    pool = _make_pool(settings, db)
+    assert pool._shutting_down is False  # noqa: SLF001
+    db.record_event(
+        delivery_id="d5",
+        event_type="issues",
+        repo="octo/widget",
+        issue_key="octo/widget#1",
+        payload={"action": "opened"},
+        state="running",
+    )
+    row = _row("d5")
+
+    async def fake_dispatch(self: WorkerPool, r: EventRow) -> None:
+        raise RuntimeError("regular failure")
+
+    monkeypatch.setattr(WorkerPool, "_dispatch", fake_dispatch)
+    await pool._run_event(row)  # noqa: SLF001
+
+    stored = db.get_event("d5")
+    assert stored is not None
+    assert stored.state == "failed"
+    assert stored.last_error is not None
+    assert "regular failure" in stored.last_error
 
 
 @pytest.mark.asyncio

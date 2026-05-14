@@ -60,6 +60,8 @@ def test_ensure_workspace_creates_worktree(tmp_path: Path, upstream_repo: Path) 
         title="something is wrong",
         clone_url=str(upstream_repo),
         default_branch="main",
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
     )
     assert ws.repo_dir.is_dir()
     assert (ws.repo_dir / "README.md").read_text() == "hello\n"
@@ -87,6 +89,8 @@ def test_ensure_workspace_is_idempotent(tmp_path: Path, upstream_repo: Path) -> 
         title="t",
         clone_url=str(upstream_repo),
         default_branch="main",
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
     )
     ws2 = mgr.ensure_workspace(
         repo="octo/widget",
@@ -94,6 +98,8 @@ def test_ensure_workspace_is_idempotent(tmp_path: Path, upstream_repo: Path) -> 
         title="t",
         clone_url=str(upstream_repo),
         default_branch="main",
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
     )
     assert ws1.repo_dir == ws2.repo_dir
     assert ws1.branch == ws2.branch
@@ -107,6 +113,8 @@ def test_remove_workspace(tmp_path: Path, upstream_repo: Path) -> None:
         title="t",
         clone_url=str(upstream_repo),
         default_branch="main",
+        author_name="robomp-bot",
+        author_email="robomp-bot@example.invalid",
     )
     assert ws.repo_dir.exists()
     mgr.remove_workspace(repo="octo/widget", number=12)
