@@ -16,6 +16,7 @@ import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { DebugTool } from "@oh-my-pi/pi-coding-agent/tools/debug";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
+const ORIGINAL_PATH = process.env.PATH;
 const TEST_ADAPTER: DapResolvedAdapter = {
 	name: "lldb-dap",
 	command: "lldb-dap",
@@ -55,6 +56,12 @@ server = Bun.listen({
 await Bun.sleep(2_000);
 server.stop();
 `;
+
+async function writeExecutable(filePath: string): Promise<void> {
+	await fs.mkdir(path.dirname(filePath), { recursive: true });
+	await fs.writeFile(filePath, process.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n");
+	await fs.chmod(filePath, 0o755);
+}
 
 type DapEventHandler = (body: unknown, event: DapEventMessage) => void | Promise<void>;
 
@@ -162,6 +169,11 @@ class FakeDapClient {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	if (ORIGINAL_PATH === undefined) {
+		delete process.env.PATH;
+	} else {
+		process.env.PATH = ORIGINAL_PATH;
+	}
 });
 
 describe("DAP launch failure handling", () => {
@@ -634,12 +646,20 @@ describe("DebugTool launch validation", () => {
 		}
 	});
 
-	it("throws targeted 'python not found in PATH' when adapter:'debugpy' is unresolvable for launch", async () => {
-		const launchSpy = spyOn(dapModule, "selectLaunchAdapter").mockReturnValue(null);
+	it("throws a Delve install hint instead of launching a native adapter for Go when default dlv is unavailable", async () => {
+		const sessionLaunchSpy = spyOn(dapModule.dapSessionManager, "launch").mockImplementation(async opts => {
+			throw new Error(`unexpected launch with ${opts.adapter.name}`);
+		});
 		try {
-			const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-debugpy-"));
+			const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-go-dlv-hint-"));
 			try {
-				await fs.writeFile(path.join(cwd, "main.py"), "print('hi')");
+				const pathDir = path.join(cwd, "empty-path");
+				process.env.PATH = pathDir;
+				await fs.mkdir(pathDir);
+				await fs.writeFile(path.join(cwd, "go.mod"), "module example.com/app\n\ngo 1.22\n");
+				await fs.writeFile(path.join(cwd, "main.go"), "package main\n\nfunc main() {}\n");
+				await writeExecutable(path.join(cwd, "bin", "gdb"));
+				await writeExecutable(path.join(cwd, "bin", "lldb-dap"));
 				const session: ToolSession = {
 					cwd,
 					hasUI: false,
@@ -649,22 +669,135 @@ describe("DebugTool launch validation", () => {
 				};
 				const tool = new DebugTool(session);
 
-				await expect(
-					tool.execute("call", { action: "launch", program: "main.py", adapter: "debugpy" }),
-				).rejects.toThrow(/debugpy.*python not found in PATH/);
+				await expect(tool.execute("call", { action: "launch", program: "main.go" })).rejects.toThrow(
+					/go install github\.com\/go-delve\/delve\/cmd\/dlv@latest/,
+				);
+				expect(sessionLaunchSpy).not.toHaveBeenCalled();
 			} finally {
 				await removeWithRetries(cwd);
 			}
 		} finally {
-			launchSpy.mockRestore();
+			sessionLaunchSpy.mockRestore();
 		}
 	});
 
-	it("throws targeted 'python not found in PATH' when adapter:'debugpy' is unresolvable for attach", async () => {
+	it("directs configured missing Delve commands back to the DAP adapter config", async () => {
+		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-dlv-config-missing-"));
+		try {
+			const pathDir = path.join(cwd, "empty-path");
+			process.env.PATH = pathDir;
+			await fs.mkdir(pathDir);
+			await fs.writeFile(path.join(cwd, "main.go"), "package main\n\nfunc main() {}\n");
+			await fs.writeFile(
+				path.join(cwd, "dap.json"),
+				JSON.stringify({ adapters: { dlv: { command: "./bin/missing-dlv" } } }),
+			);
+			const session: ToolSession = {
+				cwd,
+				hasUI: false,
+				getSessionFile: () => null,
+				getSessionSpawns: () => "*",
+				settings: Settings.isolated({ "debug.enabled": true }),
+			};
+			const tool = new DebugTool(session);
+
+			let message = "";
+			try {
+				await tool.execute("call", { action: "launch", program: "main.go", adapter: "dlv" });
+			} catch (error) {
+				expect(error).toBeInstanceOf(Error);
+				message = (error as Error).message;
+			}
+
+			expect(message).toContain("DAP adapter config");
+			expect(message).toContain("./bin/missing-dlv");
+			expect(message).not.toContain("go install github.com/go-delve/delve/cmd/dlv@latest");
+		} finally {
+			await removeWithRetries(cwd);
+		}
+	});
+
+	it("directs configured missing rdbg commands back to the DAP adapter config", async () => {
+		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-rdbg-explicit-"));
+		try {
+			const pathDir = path.join(cwd, "empty-path");
+			process.env.PATH = pathDir;
+			await fs.mkdir(pathDir);
+			await fs.writeFile(path.join(cwd, "app.rb"), "puts 'hi'\n");
+			await fs.writeFile(
+				path.join(cwd, "dap.json"),
+				JSON.stringify({ adapters: { rdbg: { command: "./bin/missing-rdbg" } } }),
+			);
+			const session: ToolSession = {
+				cwd,
+				hasUI: false,
+				getSessionFile: () => null,
+				getSessionSpawns: () => "*",
+				settings: Settings.isolated({ "debug.enabled": true }),
+			};
+			const tool = new DebugTool(session);
+
+			let message = "";
+			try {
+				await tool.execute("call", { action: "launch", program: "app.rb", adapter: "rdbg" });
+			} catch (error) {
+				expect(error).toBeInstanceOf(Error);
+				message = (error as Error).message;
+			}
+
+			expect(message).toContain("DAP adapter config");
+			expect(message).toContain("./bin/missing-rdbg");
+			expect(message).not.toContain("gem install debug");
+		} finally {
+			await removeWithRetries(cwd);
+		}
+	});
+
+	it("directs configured missing debugpy commands back to the DAP adapter config for launch", async () => {
+		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-debugpy-"));
+		try {
+			const pathDir = path.join(cwd, "empty-path");
+			process.env.PATH = pathDir;
+			await fs.mkdir(pathDir);
+			await fs.writeFile(path.join(cwd, "main.py"), "print('hi')");
+			await fs.writeFile(
+				path.join(cwd, "dap.json"),
+				JSON.stringify({ adapters: { debugpy: { command: "./bin/missing-python" } } }),
+			);
+			const session: ToolSession = {
+				cwd,
+				hasUI: false,
+				getSessionFile: () => null,
+				getSessionSpawns: () => "*",
+				settings: Settings.isolated({ "debug.enabled": true }),
+			};
+			const tool = new DebugTool(session);
+
+			let message = "";
+			try {
+				await tool.execute("call", { action: "launch", program: "main.py", adapter: "debugpy" });
+			} catch (error) {
+				expect(error).toBeInstanceOf(Error);
+				message = (error as Error).message;
+			}
+
+			expect(message).toContain("DAP adapter config");
+			expect(message).toContain("./bin/missing-python");
+			expect(message).not.toContain("python not found in PATH");
+		} finally {
+			await removeWithRetries(cwd);
+		}
+	});
+
+	it("directs configured missing debugpy commands back to the DAP adapter config for attach", async () => {
 		const attachSpy = spyOn(dapModule, "selectAttachAdapter").mockReturnValue(null);
 		try {
 			const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "omp-debug-debugpy-attach-"));
 			try {
+				await fs.writeFile(
+					path.join(cwd, "dap.json"),
+					JSON.stringify({ adapters: { debugpy: { command: "./bin/missing-python" } } }),
+				);
 				const session: ToolSession = {
 					cwd,
 					hasUI: false,
@@ -674,9 +807,17 @@ describe("DebugTool launch validation", () => {
 				};
 				const tool = new DebugTool(session);
 
-				await expect(tool.execute("call", { action: "attach", pid: 1234, adapter: "debugpy" })).rejects.toThrow(
-					/debugpy.*python not found in PATH/,
-				);
+				let message = "";
+				try {
+					await tool.execute("call", { action: "attach", pid: 1234, adapter: "debugpy" });
+				} catch (error) {
+					expect(error).toBeInstanceOf(Error);
+					message = (error as Error).message;
+				}
+
+				expect(message).toContain("DAP adapter config");
+				expect(message).toContain("./bin/missing-python");
+				expect(message).not.toContain("python not found in PATH");
 			} finally {
 				await removeWithRetries(cwd);
 			}

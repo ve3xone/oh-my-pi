@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { $which, isRecord, logger, pathIsWithin } from "@oh-my-pi/pi-utils";
+import { $which, isRecord, logger, pathIsWithin, type WhichOptions } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
 import { getConfigDirPaths } from "../config";
 import { type ClaudePluginRoot, getPreloadedPluginRoots } from "../discovery/helpers";
@@ -249,7 +249,7 @@ const LOCAL_BIN_PATHS: Array<{ markers: string[]; binDir: string }> = [
 	{ markers: ["Gemfile", "Gemfile.lock"], binDir: "vendor/bundle/bin" },
 	{ markers: ["Gemfile", "Gemfile.lock"], binDir: "bin" },
 	// Go - check project-local bin
-	{ markers: ["go.mod", "go.sum"], binDir: "bin" },
+	{ markers: ["go.mod", "go.sum", "go.work"], binDir: "bin" },
 ];
 
 const WINDOWS_LOCAL_EXECUTABLE_EXTENSIONS = [".exe", ".cmd", ".bat"] as const;
@@ -271,11 +271,16 @@ function resolveLocalCommand(basePath: string): string | null {
  * Resolve a command to an executable path.
  * Checks project-local bin directories first, then falls back to $PATH.
  *
- * @param command - The command name (e.g., "typescript-language-server")
+ * @param command - The command name (e.g. "typescript-language-server")
  * @param cwd - Working directory to search from
+ * @param options - Optional PATH lookup controls.
  * @returns Absolute path to the executable, or null if not found
  */
-export function resolveCommand(command: string, cwd: string): string | null {
+export function resolveCommand(
+	command: string,
+	cwd: string,
+	options?: Pick<WhichOptions, "cache" | "PATH">,
+): string | null {
 	// Check local bin directories based on project markers
 	for (const { markers, binDir } of LOCAL_BIN_PATHS) {
 		if (hasRootMarkers(cwd, markers)) {
@@ -288,7 +293,7 @@ export function resolveCommand(command: string, cwd: string): string | null {
 	}
 
 	// Fall back to $PATH
-	return $which(command);
+	return options ? $which(command, options) : $which(command);
 }
 
 interface ConfigSource {

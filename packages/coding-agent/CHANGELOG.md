@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Go debug launches using native adapters when `dlv` is unavailable; missing Delve and Ruby debug adapters now show install hints, nested Go package directories match module/workspace markers from the launch path, and DAP executable lookup refreshes PATH misses. ([#5037](https://github.com/can1357/oh-my-pi/issues/5037))
+
 ## [16.3.15] - 2026-07-09
 
 ### Changed

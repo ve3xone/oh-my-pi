@@ -31,7 +31,9 @@ import {
 	type DapThread,
 	type DapVariable,
 	dapSessionManager,
+	getAdapterConfigs,
 	getAvailableAdapters,
+	getUnavailableLaunchAdapterName,
 	type LaunchProgramKind,
 	resolveLaunchOverrides,
 	selectAttachAdapter,
@@ -497,6 +499,40 @@ function getConfiguredAdapters(cwd: string): string {
 	return adapters.length > 0 ? adapters.join(", ") : "none";
 }
 
+const ADAPTER_UNAVAILABLE_MESSAGES: Record<string, string> = {
+	debugpy: "adapter 'debugpy' is not available: python not found in PATH",
+	dlv: "adapter 'dlv' is not available: install with 'go install github.com/go-delve/delve/cmd/dlv@latest'",
+	rdbg: "adapter 'rdbg' is not available: install with 'gem install debug'",
+};
+
+const ADAPTER_CANONICAL_COMMANDS: Record<string, string> = {
+	debugpy: "python",
+	dlv: "dlv",
+	rdbg: "rdbg",
+};
+
+function formatAdapterUnavailable(adapterName: string, cwd: string): string {
+	const config = getAdapterConfigs(cwd)[adapterName];
+	const canonicalCommand = ADAPTER_CANONICAL_COMMANDS[adapterName] ?? adapterName;
+	if (config && config.command !== canonicalCommand) {
+		return `adapter '${adapterName}' is not available: configured command '${config.command}' did not resolve. Check the DAP adapter config for this workspace.`;
+	}
+	const message = ADAPTER_UNAVAILABLE_MESSAGES[adapterName];
+	if (message) return message;
+	return `adapter '${adapterName}' is not available. Installed adapters: ${getConfiguredAdapters(cwd)}`;
+}
+
+function formatNoLaunchAdapterAvailable(
+	program: string,
+	cwd: string,
+	adapterName: string | undefined,
+	programKind: LaunchProgramKind,
+): string {
+	const unavailableAdapter = getUnavailableLaunchAdapterName(program, cwd, adapterName, programKind);
+	if (unavailableAdapter) return formatAdapterUnavailable(unavailableAdapter, cwd);
+	return `No debugger adapter available. Installed adapters: ${getConfiguredAdapters(cwd)}`;
+}
+
 async function classifyLaunchProgram(program: string): Promise<LaunchProgramKind> {
 	try {
 		return (await fs.stat(program)).isDirectory() ? "directory" : "file";
@@ -515,7 +551,7 @@ function validateLaunchProgram(
 	if (programKind !== "directory" || adapter.acceptsDirectoryProgram) return;
 	const displayPath = formatPathRelativeToCwd(program, cwd, { trailingSlash: true });
 	throw new ToolError(
-		`launch program resolves to a directory: ${displayPath}. Pass an executable file path, or for Python use adapter "debugpy" with program set to the .py file.`,
+		`launch program resolves to a directory: ${displayPath}. Pass an executable file path or choose an adapter that supports package directories.`,
 	);
 }
 
@@ -713,12 +749,7 @@ export class DebugTool implements AgentTool<typeof debugSchema, DebugToolDetails
 				const programKind = await classifyLaunchProgram(program);
 				const adapter = selectLaunchAdapter(program, commandCwd, params.adapter, programKind);
 				if (!adapter) {
-					if (params.adapter === "debugpy") {
-						throw new ToolError("adapter 'debugpy' is not available: python not found in PATH");
-					}
-					throw new ToolError(
-						`No debugger adapter available. Installed adapters: ${getConfiguredAdapters(commandCwd)}`,
-					);
+					throw new ToolError(formatNoLaunchAdapterAvailable(program, commandCwd, params.adapter, programKind));
 				}
 				validateLaunchProgram(program, commandCwd, programKind, adapter);
 				const extraLaunchArguments = resolveLaunchOverrides(adapter, program, programKind);
@@ -738,8 +769,8 @@ export class DebugTool implements AgentTool<typeof debugSchema, DebugToolDetails
 				const commandCwd = params.cwd ? resolveToCwd(params.cwd, this.session.cwd) : this.session.cwd;
 				const adapter = selectAttachAdapter(commandCwd, params.adapter, params.port);
 				if (!adapter) {
-					if (params.adapter === "debugpy") {
-						throw new ToolError("adapter 'debugpy' is not available: python not found in PATH");
+					if (params.adapter) {
+						throw new ToolError(formatAdapterUnavailable(params.adapter, commandCwd));
 					}
 					throw new ToolError(
 						`No debugger adapter available. Installed adapters: ${getConfiguredAdapters(commandCwd)}`,

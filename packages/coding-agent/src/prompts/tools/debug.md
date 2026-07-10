@@ -11,7 +11,7 @@ Debugger access.
 
 <caution>
 - Only one active debug session at a time.
-- Valid `adapter` values: `gdb`, `lldb-dap`, `python -m debugpy.adapter`, `dlv dap` (must be installed locally).
-- `program` must be an executable file or debug target, not a directory or bare interpreter name.
-- Python debugging requires `debugpy`; `pip install debugpy` if unavailable.
+- Valid `adapter` values include `gdb`, `lldb-dap`, `debugpy`, `dlv`, `rdbg`.
+- Go/Delve accepts `.go` files and package directories. Install Delve with `go install github.com/go-delve/delve/cmd/dlv@latest`.
+- Python debugging requires `debugpy`; install with `pip install debugpy` if unavailable.
 </caution>
