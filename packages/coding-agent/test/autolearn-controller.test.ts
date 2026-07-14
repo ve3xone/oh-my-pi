@@ -55,6 +55,11 @@ class FakeSession {
 	agentEnd(): void {
 		this.emit({ type: "agent_end", messages: [] });
 	}
+
+	agentEndAborted(): void {
+		const aborted = { role: "assistant", stopReason: "aborted", content: [] } as unknown as AgentSessionEvent;
+		this.emit({ type: "agent_end", messages: [aborted] } as unknown as AgentSessionEvent);
+	}
 }
 
 function install(session: FakeSession, overrides: Record<string, unknown> = {}): Settings {
@@ -186,6 +191,27 @@ describe("AutoLearnController", () => {
 		// The capture is per-turn: a fresh turn that did not start in goal mode
 		// nudges normally, proving the latch resets.
 		session.agentStart();
+		session.toolCalls(5);
+		session.agentEnd();
+		expect(session.sent).toHaveLength(1);
+	});
+
+	it("does not nudge after an aborted assistant turn (#4925)", () => {
+		const session = new FakeSession();
+		install(session, { "autolearn.autoContinue": true });
+		session.toolCalls(5);
+		// ESC/cancel leaves the final assistant message with stopReason "aborted".
+		session.agentEndAborted();
+		expect(session.sent).toHaveLength(0);
+	});
+
+	it("does not arm suppression on an aborted stop, so the next real stop nudges", () => {
+		const session = new FakeSession();
+		install(session, { "autolearn.autoContinue": true });
+		session.toolCalls(5);
+		session.agentEndAborted();
+		expect(session.sent).toHaveLength(0);
+		// The skipped abort must not swallow the following non-aborted stop.
 		session.toolCalls(5);
 		session.agentEnd();
 		expect(session.sent).toHaveLength(1);

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed autolearn firing a capture nudge after an aborted assistant turn (ESC/cancel): `AutoLearnController` now inspects the `agent_end` payload and skips the nudge when the last assistant message stopped with `stopReason: "aborted"` ([#4925](https://github.com/can1357/oh-my-pi/issues/4925)).
+
 ## [16.3.12] - 2026-07-08
 
 ### Added

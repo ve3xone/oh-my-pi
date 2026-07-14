@@ -10,6 +10,8 @@
  * for the session's lifetime — `newSession` resets the session in place
  * without re-running startup — so the controller needs no disposal.
  */
+import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { StopReason } from "@oh-my-pi/pi-ai";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { Settings } from "../config/settings";
 import autolearnGuidance from "../prompts/system/autolearn-guidance.md" with { type: "text" };
@@ -19,6 +21,19 @@ import type { AgentSession, AgentSessionEvent } from "../session/agent-session";
 
 const AUTOLEARN_NUDGE_AUTOCONTINUE = autolearnNudgeAutoContinue.trim();
 const DEFAULT_MIN_TOOL_CALLS = 5;
+
+/**
+ * Stop reason of the last assistant message in an `agent_end` payload, or
+ * `undefined` when the turn produced none. Walks from the end because a turn
+ * may append trailing tool-result messages after the assistant stop.
+ */
+function lastAssistantStopReason(messages: readonly AgentMessage[]): StopReason | undefined {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message.role === "assistant") return message.stopReason;
+	}
+	return undefined;
+}
 
 /**
  * Build the standing auto-learn guidance for the system prompt from the tools
@@ -76,11 +91,11 @@ export class AutoLearnController {
 			return;
 		}
 		if (event.type === "agent_end") {
-			this.#onAgentEnd();
+			this.#onAgentEnd(event);
 		}
 	}
 
-	#onAgentEnd(): void {
+	#onAgentEnd(event: Extract<AgentSessionEvent, { type: "agent_end" }>): void {
 		// Snapshot and reset every turn: the counter describes only the
 		// just-finished turn, so below-threshold, disabled, and plan-mode stops
 		// must not let tool calls accumulate into a later turn.
@@ -107,6 +122,11 @@ export class AutoLearnController {
 		// still in it: a passive nudge would ride the goal continuation, and
 		// auto-continue would compete with it.
 		if (startedInGoalMode || this.#session.getGoalModeState()?.enabled) return;
+		// Never nudge after an aborted assistant turn. A user ESC/cancel (or any
+		// lifecycle abort) leaves the final assistant message with
+		// stopReason: "aborted"; auto-continuing would resurrect a turn the user
+		// deliberately stopped and inject a capture prompt into a cancelled flow.
+		if (lastAssistantStopReason(event.messages) === "aborted") return;
 
 		// Auto-run a capture turn only when explicitly enabled. Passive mode used to
 		// queue a hidden custom message for the next real turn, but that mutates the
