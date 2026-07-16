@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a startup crash when the project directory resolves to a Windows drive root (e.g. `R:\`): `canonicalProjectDir` now treats `EISDIR` from `fs.realpath` as a recoverable fallback, matching the existing `ENOENT` handling.
+
 ## [17.0.1] - 2026-07-16
 
 ### Changed
