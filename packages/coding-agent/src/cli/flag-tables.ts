@@ -335,11 +335,13 @@ export function flagConsumesValue(flag: string, next: string | undefined): boole
 	// `--flag=value` carries its own value inline.
 	if (flag.startsWith("--") && flag.includes("=")) return false;
 	if (next === undefined) return false;
-	// Known string flags consume any successor, even a flag-looking one
+	const valueLike = !next.startsWith("-");
+	// Extension-shadowable built-ins mirror the extension parser: a flag-looking
+	// successor remains a fresh flag instead of becoming the built-in's value.
+	if (EXTENSION_SHADOWABLE_STRING_FLAGS.has(flag)) return valueLike;
+	// Other known string flags consume any successor, even a flag-looking one
 	// (`--system-prompt --foo` ⇒ the system prompt is literally `--foo`).
 	if (STRING_VALUE_FLAGS.has(flag)) return true;
-	const valueLike = !next.startsWith("-");
-	if (EXTENSION_SHADOWABLE_STRING_FLAGS.has(flag)) return valueLike;
 	if (OPTIONAL_VALUE_FLAGS.has(flag)) {
 		const config = OPTIONAL_FLAGS[flag];
 		return valueLike && !(config.rejectEmpty === true && next.length === 0);

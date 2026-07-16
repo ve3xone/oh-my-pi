@@ -94,6 +94,13 @@ describe("resolveCliArgv + extractCliConfig strip global --config for implicit l
 		});
 	});
 
+	test("an extension-shadowable flag does not consume a following --config", () => {
+		expect(pipeline(["--plan", "--config", "x.yml", "prompt"])).toEqual({
+			argv: ["launch", "--plan", "--omp-profile-boundary", "prompt"],
+			configFiles: ["x.yml"],
+		});
+	});
+
 	test("a lone leading --config extracts without leaving a stray value in argv", () => {
 		expect(pipeline(["--config", "only.yml"])).toEqual({
 			argv: ["launch"],
