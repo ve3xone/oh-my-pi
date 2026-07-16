@@ -373,7 +373,13 @@ export async function runCli(argv: string[]): Promise<void> {
 	try {
 		const extracted = extractCliConfig(resolved.argv);
 		setCliConfigFiles(extracted.configFiles);
-		return run({ bin: APP_NAME, version: VERSION, argv: extracted.argv, commands, help: showHelp });
+		try {
+			await run({ bin: APP_NAME, version: VERSION, argv: extracted.argv, commands, help: showHelp });
+		} finally {
+			// `--config` is scoped to this invocation: clear the module-level stash
+			// so a later in-process `runCli`/`Settings.init` does not inherit it.
+			setCliConfigFiles([]);
+		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		process.stderr.write(`Error: ${message}\n`);

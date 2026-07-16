@@ -33,7 +33,7 @@ import { loadCapability } from "../discovery";
 import { isLightTheme, setAutoThemeMapping, setColorBlindMode, setSymbolPreset } from "../modes/theme/theme";
 import { AgentStorage } from "../session/agent-storage";
 import { type EditMode, normalizeEditMode } from "../utils/edit-mode";
-import { getCliConfigFiles } from "./cli-config";
+import { getCliConfigFiles, setCliConfigFiles } from "./cli-config";
 import { withFileLock } from "./file-lock";
 import {
 	type BashInterceptorRule,
@@ -1560,6 +1560,7 @@ export function resetSettingsForTest(): void {
 	globalInstancePromise = null;
 	clearBoundSettingsMethods();
 	configureProviderMaxInFlightRequests(undefined);
+	setCliConfigFiles([]);
 }
 
 /**

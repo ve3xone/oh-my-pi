@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as path from "node:path";
 import { runConfigCommand } from "@oh-my-pi/pi-coding-agent/cli/config-cli";
+import { getCliConfigFiles } from "@oh-my-pi/pi-coding-agent/config/cli-config";
 import { resetSettingsForTest } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentStorage } from "@oh-my-pi/pi-coding-agent/session/agent-storage";
 import { getConfigRootDir, setAgentDir, TempDir } from "@oh-my-pi/pi-utils";
+import { runCli } from "../src/cli";
 
 let testAgentDir: TempDir | undefined;
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -253,5 +255,18 @@ describe("config CLI schema coverage", () => {
 			value: "max",
 			type: "enum",
 		});
+	});
+	it("clears the CLI config stash after an in-process runCli invocation", async () => {
+		if (!testAgentDir) throw new Error("Test agent directory was not initialized");
+		const overlayPath = path.join(testAgentDir.path(), "overlay.yml");
+		await Bun.write(overlayPath, "defaultThinkingLevel: high\n");
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		const originalExitCode = process.exitCode;
+
+		await runCli(["--config", overlayPath, "config", "get", "defaultThinkingLevel", "--json"]);
+
+		// A later settings load in the same process must not inherit this overlay.
+		expect(getCliConfigFiles()).toEqual([]);
+		process.exitCode = originalExitCode;
 	});
 });
