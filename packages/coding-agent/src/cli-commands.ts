@@ -150,23 +150,15 @@ export function extractCliConfig(argv: readonly string[]): ExtractedCliConfig {
 			stripped.push(...argv.slice(index));
 			break;
 		}
-		if (arg === "--config") {
-			const value = argv[index + 1];
-			if (value === undefined) throw new Error("--config requires a file path");
-			configFiles.push(value);
-			if (launchShaped) {
-				insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
-			}
-			index += 1;
-			continue;
-		}
-		if (arg.startsWith("--config=")) {
-			const value = arg.slice("--config=".length);
+		if (arg === "--config" || arg.startsWith("--config=")) {
+			const separateValue = arg === "--config";
+			const value = separateValue ? argv[index + 1] : arg.slice("--config=".length);
 			if (!value) throw new Error("--config requires a file path");
 			configFiles.push(value);
 			if (launchShaped) {
 				insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
 			}
+			if (separateValue) index += 1;
 			continue;
 		}
 

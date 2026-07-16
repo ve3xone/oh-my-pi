@@ -140,6 +140,18 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 			continue;
 		}
 
+		// `--config` is global across strict subcommands. Preserve it for the
+		// post-routing extractor without making a following command look like
+		// launch text; otherwise a later `--profile` is stolen from that command.
+		if (arg === "--config" || arg.startsWith("--config=")) {
+			stripped.push(arg);
+			if (arg === "--config" && index + 1 < argv.length) {
+				stripped.push(argv[index + 1]);
+				index += 1;
+			}
+			continue;
+		}
+
 		// Known string flags normally consume flag-looking values (for example
 		// `--system-prompt --profile foo` means the system prompt is literally
 		// `--profile`). A small allow-list of built-ins can be shadowed by boolean

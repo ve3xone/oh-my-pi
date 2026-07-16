@@ -217,6 +217,22 @@ describe("config CLI schema coverage", () => {
 			type: "enum",
 		});
 	});
+	it("does not steal a profile flag owned by a config-prefixed strict subcommand", async () => {
+		if (!testAgentDir) throw new Error("Test agent directory was not initialized");
+		const overlayPath = path.join(testAgentDir.path(), "overlay.yml");
+		await Bun.write(overlayPath, "defaultThinkingLevel: high\n");
+		const { exitCode, output, error } = await runCliProcess(
+			["--config", overlayPath, "config", "get", "defaultThinkingLevel", "--profile", "work"],
+			{
+				PI_CODING_AGENT_DIR: testAgentDir.path(),
+				PI_CONFIG_FILES: "",
+			},
+		);
+
+		expect(exitCode).toBe(1);
+		expect(output).toBe("");
+		expect(error).toContain("Unknown option '--profile'");
+	});
 	it("loads PI_CONFIG_FILES overlays in path-list order", async () => {
 		if (!testAgentDir) throw new Error("Test agent directory was not initialized");
 		const baseOverlayPath = path.join(testAgentDir.path(), "base-overlay.yml");
