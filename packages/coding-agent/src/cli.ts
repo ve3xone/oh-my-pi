@@ -27,6 +27,7 @@ import {
 import { declareWorkerHostEntry, installWorkerInbox } from "@oh-my-pi/pi-utils/worker-host";
 import { installProfileAlias, resolveProfileAliasCommandFromProcess } from "./cli/profile-alias";
 import { extractProfileFlags } from "./cli/profile-bootstrap";
+import { setCliConfigFiles } from "./config/cli-config";
 import { DAEMON_BROKER_WORKER_ARG } from "./launch/protocol";
 
 if (Bun.semver.order(Bun.version, MIN_BUN_VERSION) < 0) {
@@ -357,7 +358,7 @@ export async function runCli(argv: string[]): Promise<void> {
 		await runSmokeTest();
 		return;
 	}
-	const [{ run }, { commands, resolveCliArgv }] = await Promise.all([
+	const [{ run }, { commands, extractCliConfig, resolveCliArgv }] = await Promise.all([
 		import("@oh-my-pi/pi-utils/cli"),
 		import("./cli-commands"),
 	]);
@@ -369,7 +370,15 @@ export async function runCli(argv: string[]): Promise<void> {
 		process.exitCode = 1;
 		return;
 	}
-	return run({ bin: APP_NAME, version: VERSION, argv: resolved.argv, commands, help: showHelp });
+	try {
+		const extracted = extractCliConfig(resolved.argv);
+		setCliConfigFiles(extracted.configFiles);
+		return run({ bin: APP_NAME, version: VERSION, argv: extracted.argv, commands, help: showHelp });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		process.stderr.write(`Error: ${message}\n`);
+		process.exitCode = 1;
+	}
 }
 
 // Floating call instead of top-level await: TLA forces `--bytecode` (CJS

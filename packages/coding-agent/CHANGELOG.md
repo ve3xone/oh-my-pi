@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Made `--config` a global option that strict subcommands accept, and added `PI_CONFIG_FILES` for platform-delimited environment overlays, allowing wrapper scripts to inject settings without a command allowlist ([#5685](https://github.com/can1357/oh-my-pi/issues/5685)).
+
 ## [17.0.1] - 2026-07-16
 
 ### Changed

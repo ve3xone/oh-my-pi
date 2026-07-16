@@ -37,6 +37,7 @@ import { isSubcommand } from "../cli-commands";
 import {
 	EXTENSION_SHADOWABLE_STRING_FLAGS,
 	isUnknownLongValueCandidate,
+	needsBootstrapBoundaryAfterGlobalStrip,
 	OPTIONAL_FLAGS,
 	OPTIONAL_VALUE_FLAGS,
 	PROFILE_BOOTSTRAP_BOUNDARY_ARG,
@@ -45,16 +46,6 @@ import {
 
 function isProfileBootstrapSubcommand(arg: string): boolean {
 	return arg === "launch" || arg === "acp";
-}
-
-function needsBoundaryAfterGlobalStrip(stripped: readonly string[]): boolean {
-	const previous = stripped[stripped.length - 1];
-	return (
-		previous !== undefined &&
-		(OPTIONAL_VALUE_FLAGS.has(previous) ||
-			EXTENSION_SHADOWABLE_STRING_FLAGS.has(previous) ||
-			isUnknownLongValueCandidate(previous))
-	);
 }
 
 export interface ProfileBootstrapResult {
@@ -116,7 +107,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 				throw new Error("--profile requires a profile name");
 			}
 			profile = value;
-			insertBoundaryBeforeNextValue = needsBoundaryAfterGlobalStrip(stripped);
+			insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
 			index += 1;
 			continue;
 		}
@@ -126,7 +117,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 				throw new Error("--profile requires a profile name");
 			}
 			profile = value;
-			insertBoundaryBeforeNextValue = needsBoundaryAfterGlobalStrip(stripped);
+			insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
 			continue;
 		}
 		if (arg === "--alias") {
@@ -135,7 +126,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 				throw new Error("--alias requires a command name");
 			}
 			aliasName = value;
-			insertBoundaryBeforeNextValue = needsBoundaryAfterGlobalStrip(stripped);
+			insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
 			index += 1;
 			continue;
 		}
@@ -145,7 +136,7 @@ export function extractProfileFlags(argv: readonly string[]): ProfileBootstrapRe
 				throw new Error("--alias requires a command name");
 			}
 			aliasName = value;
-			insertBoundaryBeforeNextValue = needsBoundaryAfterGlobalStrip(stripped);
+			insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
 			continue;
 		}
 

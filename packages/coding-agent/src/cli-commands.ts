@@ -9,7 +9,11 @@
  * regression that motivated the split.
  */
 import type { CommandEntry } from "@oh-my-pi/pi-utils/cli";
-import { flagConsumesValue } from "./cli/flag-tables";
+import {
+	flagConsumesValue,
+	needsBootstrapBoundaryAfterGlobalStrip,
+	PROFILE_BOOTSTRAP_BOUNDARY_ARG,
+} from "./cli/flag-tables";
 
 export const commands: CommandEntry[] = [
 	{ name: "launch", load: () => import("./commands/launch").then(m => m.default) },
@@ -119,6 +123,62 @@ export function isSubcommand(first: string | undefined): boolean {
 }
 
 export type ResolvedCliArgv = { argv: string[] } | { error: string };
+
+export interface ExtractedCliConfig {
+	argv: string[];
+	configFiles: string[];
+}
+
+/**
+ * Strip global `--config` overlays after command routing so strict subcommand
+ * parsers never see them, while preserving values owned by other flags.
+ */
+export function extractCliConfig(argv: readonly string[]): ExtractedCliConfig {
+	const command = argv[0];
+	const launchShaped = command === "launch" || command === "acp";
+	const stripped = command === undefined ? [] : [command];
+	const configFiles: string[] = [];
+	let insertBoundaryBeforeNextValue = false;
+
+	for (let index = 1; index < argv.length; index += 1) {
+		const arg = argv[index];
+		if (insertBoundaryBeforeNextValue) {
+			if (!arg.startsWith("-")) stripped.push(PROFILE_BOOTSTRAP_BOUNDARY_ARG);
+			insertBoundaryBeforeNextValue = false;
+		}
+		if (arg === "--") {
+			stripped.push(...argv.slice(index));
+			break;
+		}
+		if (arg === "--config") {
+			const value = argv[index + 1];
+			if (value === undefined) throw new Error("--config requires a file path");
+			configFiles.push(value);
+			if (launchShaped) {
+				insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
+			}
+			index += 1;
+			continue;
+		}
+		if (arg.startsWith("--config=")) {
+			const value = arg.slice("--config=".length);
+			if (!value) throw new Error("--config requires a file path");
+			configFiles.push(value);
+			if (launchShaped) {
+				insertBoundaryBeforeNextValue = needsBootstrapBoundaryAfterGlobalStrip(stripped);
+			}
+			continue;
+		}
+
+		stripped.push(arg);
+		if (flagConsumesValue(arg, argv[index + 1])) {
+			stripped.push(argv[index + 1]);
+			index += 1;
+		}
+	}
+
+	return { argv: stripped, configFiles };
+}
 
 /**
  * Index of the first argv token that names a registered subcommand, skipping

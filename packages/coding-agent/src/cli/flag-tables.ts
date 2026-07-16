@@ -347,3 +347,17 @@ export function flagConsumesValue(flag: string, next: string | undefined): boole
 	if (isUnknownLongValueCandidate(flag)) return valueLike;
 	return false;
 }
+
+/**
+ * Whether stripping a global option would expose a value-like token to a
+ * preceding optional or extension flag.
+ */
+export function needsBootstrapBoundaryAfterGlobalStrip(stripped: readonly string[]): boolean {
+	const previous = stripped[stripped.length - 1];
+	return (
+		previous !== undefined &&
+		(OPTIONAL_VALUE_FLAGS.has(previous) ||
+			EXTENSION_SHADOWABLE_STRING_FLAGS.has(previous) ||
+			isUnknownLongValueCandidate(previous))
+	);
+}

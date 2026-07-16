@@ -9,7 +9,7 @@
  * flags.
  */
 import { describe, expect, test } from "bun:test";
-import { resolveCliArgv } from "@oh-my-pi/pi-coding-agent/cli-commands";
+import { extractCliConfig, resolveCliArgv } from "@oh-my-pi/pi-coding-agent/cli-commands";
 
 describe("resolveCliArgv routes subcommands hidden behind leading global flags", () => {
 	test("`--approval-mode=yolo acp` dispatches the acp subcommand with the flag preserved", () => {
@@ -59,6 +59,45 @@ describe("resolveCliArgv routes subcommands hidden behind leading global flags",
 	test("`gc` dispatches as a top-level maintenance subcommand", () => {
 		expect(resolveCliArgv(["gc", "--apply"])).toEqual({
 			argv: ["gc", "--apply"],
+		});
+	});
+});
+
+/**
+ * `extractCliConfig` runs on the output of `resolveCliArgv`, never on raw argv.
+ * These guard the composed contract for implicit launches (argv[0] is a flag):
+ * `resolveCliArgv` prepends `launch`, so `extractCliConfig` always sees a
+ * command word at argv[0] and treats the invocation as launch-shaped. Reasoning
+ * about `extractCliConfig` on flag-leading argv in isolation is misleading — the
+ * pipeline never hands it that shape.
+ */
+describe("resolveCliArgv + extractCliConfig strip global --config for implicit launches", () => {
+	function pipeline(argv: string[]): { argv: string[]; configFiles: string[] } {
+		const resolved = resolveCliArgv(argv);
+		if ("error" in resolved) throw new Error(resolved.error);
+		return extractCliConfig(resolved.argv);
+	}
+
+	test("a leading --config is extracted, preserving repeated-overlay order", () => {
+		// Later overlay files override earlier ones, so `b.yml` must stay last.
+		expect(pipeline(["--config", "a.yml", "--config", "b.yml", "prompt"])).toEqual({
+			argv: ["launch", "prompt"],
+			configFiles: ["a.yml", "b.yml"],
+		});
+	});
+
+	test("stripping --config between an optional-value flag and a positional keeps the boundary", () => {
+		// Without the sentinel, `--resume` would swallow `msg` as its session id.
+		expect(pipeline(["--resume", "--config", "x.yml", "msg"])).toEqual({
+			argv: ["launch", "--resume", "--omp-profile-boundary", "msg"],
+			configFiles: ["x.yml"],
+		});
+	});
+
+	test("a lone leading --config extracts without leaving a stray value in argv", () => {
+		expect(pipeline(["--config", "only.yml"])).toEqual({
+			argv: ["launch"],
+			configFiles: ["only.yml"],
 		});
 	});
 });
